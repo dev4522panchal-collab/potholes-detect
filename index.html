@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>The Chanakyas — Road Scan</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<script type="module">
+  import { initializeApp }                          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc,
+           onSnapshot, query, orderBy, deleteDoc,
+           updateDoc, doc }                         from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey:            "AIzaSyD9i78SfjG23Lj9AJtnISZ--k1xZUhNi_g",
+    authDomain:        "chanakyas-road.firebaseapp.com",
+    projectId:         "chanakyas-road",
+    storageBucket:     "chanakyas-road.firebasestorage.app",
+    messagingSenderId: "950208319080",
+    appId:             "1:950208319080:web:06a5c518dcaab4640d75dd"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+  const ticketsCol = collection(db, 'tickets');
+
+  window._db         = db;
+  window._ticketsCol = ticketsCol;
+  window._addDoc     = addDoc;
+  window._deleteDoc  = deleteDoc;
+  window._updateDoc  = updateDoc;
+  window._doc        = doc;
+  window._dbReady    = true;
+
+  const q = query(ticketsCol, orderBy('createdAt', 'desc'));
+  onSnapshot(q, snapshot => {
+    const tickets = [];
+    snapshot.forEach(d => tickets.push({ firestoreId: d.id, ...d.data() }));
+    window._tickets = tickets;
+    updateBadge();
+    updateRHI();
+    if (window._activeTab === 'dashboard') renderDashboard();
+  });
+</script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@500;700&family=Share+Tech+Mono&display=swap');
+
+  :root {
+    --bg: #0a0c0f; --panel: #111318; --border: #1e2530;
+    --accent: #00e5ff; --danger: #ff1744; --good: #00e676;
+    --warn: #ffab00; --text: #c8d8e8; --dim: #4a5568;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:'Rajdhani',sans-serif; min-height:100vh;
+    display:flex; flex-direction:column; align-items:center; overflow-x:hidden;
+  }
+
+  body::before {
+    content:''; position:fixed; inset:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,229,255,0.015) 2px,rgba(0,229,255,0.015) 4px);
+    pointer-events:none; z-index:100;
+  }
+
+  /* ── Team Banner ── */
+  .team-banner {
+    width:100%; padding:22px 20px 18px;
+    background:linear-gradient(135deg,#0a0c0f 0%,#0d1117 60%,#0a1628 100%);
+    border-bottom:1px solid rgba(0,229,255,0.15);
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    position:relative; overflow:hidden;
+  }
+  .team-banner::before {
+    content:''; position:absolute; inset:0;
+    background:radial-gradient(ellipse 60% 80% at 50% 120%,rgba(0,229,255,0.07) 0%,transparent 70%);
+    pointer-events:none;
+  }
+  .team-name {
+    font-family:'Orbitron',sans-serif; font-size:clamp(22px,6vw,32px);
+    font-weight:900; letter-spacing:4px; text-transform:uppercase;
+    background:linear-gradient(90deg,#00e5ff 0%,#ffffff 50%,#00e5ff 100%);
+    background-size:200% auto; -webkit-background-clip:text;
+    -webkit-text-fill-color:transparent; background-clip:text;
+    animation:shine 3s linear infinite; position:relative; z-index:1;
+  }
+  @keyframes shine { from{background-position:0% center} to{background-position:200% center} }
+  .team-tagline {
+    font-family:'Share Tech Mono',monospace; font-size:10px;
+    letter-spacing:3px; color:var(--dim); text-transform:uppercase;
+    position:relative; z-index:1;
+  }
+  .team-line { width:60px; height:1px; background:linear-gradient(90deg,transparent,var(--accent),transparent); margin-top:4px; }
+
+  /* ── Mode Banner ── */
+  #modeBanner {
+    display:none; width:100%; padding:6px 16px;
+    background:rgba(255,171,0,0.08); border-bottom:1px solid rgba(255,171,0,0.2);
+    font-family:'Share Tech Mono',monospace; font-size:10px;
+    letter-spacing:1px; color:var(--warn); text-align:center;
+  }
+
+  /* ── Sync Status ── */
+  #syncStatus {
+    width:100%; padding:6px 16px; background:rgba(0,229,255,0.05);
+    border-bottom:1px solid var(--border); font-family:'Share Tech Mono',monospace;
+    font-size:10px; letter-spacing:1px; color:var(--dim);
+    display:flex; align-items:center; gap:8px;
+  }
+  .sync-dot { width:6px; height:6px; border-radius:50%; background:var(--dim); flex-shrink:0; transition:background 0.3s; }
+  .sync-dot.live { background:var(--good); box-shadow:0 0 6px var(--good); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* ── Tab Bar ── */
+  .tab-bar { width:100%; display:flex; background:var(--panel); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:20; }
+  .tab-btn {
+    flex:1; padding:13px 10px; background:transparent; border:none;
+    color:var(--dim); font-family:'Rajdhani',sans-serif; font-size:13px;
+    font-weight:700; letter-spacing:2px; text-transform:uppercase; cursor:pointer;
+    border-bottom:2px solid transparent; transition:all 0.2s;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+  }
+  .tab-btn.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-badge { background:var(--danger); color:#fff; font-size:10px; font-family:'Share Tech Mono',monospace; border-radius:99px; padding:1px 6px; display:none; }
+  .tab-badge.show { display:inline-block; }
+
+  .tab-page { display:none; width:100%; }
+  .tab-page.active { display:block; }
+
+  /* ── Scanner ── */
+  .main { width:100%; max-width:480px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+
+  /* ── RHI Widget ── */
+  .rhi-widget { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .rhi-header { display:flex; align-items:center; justify-content:space-between; }
+  .rhi-label  { font-family:'Orbitron',sans-serif; font-size:11px; letter-spacing:2px; color:var(--accent); text-transform:uppercase; }
+  .rhi-score-row { display:flex; align-items:flex-end; gap:6px; }
+  .rhi-score { font-family:'Orbitron',sans-serif; font-size:42px; font-weight:900; line-height:1; transition:color 0.5s; }
+  .rhi-max   { font-family:'Share Tech Mono',monospace; font-size:13px; color:var(--dim); padding-bottom:6px; }
+  .rhi-status-tag { font-size:11px; font-weight:700; letter-spacing:2px; padding:3px 10px; border-radius:4px; text-transform:uppercase; margin-left:auto; }
+  .rhi-track { width:100%; height:8px; background:var(--border); border-radius:99px; overflow:hidden; }
+  .rhi-fill  { height:100%; border-radius:99px; transition:width 0.8s cubic-bezier(0.4,0,0.2,1), background 0.5s; }
+  .rhi-meta  { display:flex; gap:16px; flex-wrap:wrap; }
+  .rhi-stat  { display:flex; flex-direction:column; gap:2px; }
+  .rhi-stat-val { font-family:'Share Tech Mono',monospace; font-size:16px; color:var(--text); }
+  .rhi-stat-key { font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+
+  /* ── Buttons ── */
+  .btn { background:transparent; border:1px solid var(--accent); color:var(--accent); font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; letter-spacing:2px; padding:9px 18px; border-radius:6px; cursor:pointer; text-transform:uppercase; transition:all 0.2s; white-space:nowrap; }
+  .btn:hover,.btn:active { background:var(--accent); color:var(--bg); }
+  .btn:disabled { opacity:0.3; cursor:not-allowed; pointer-events:none; }
+
+  #statusBar { font-family:'Share Tech Mono',monospace; font-size:12px; color:var(--dim); padding:8px 14px; background:var(--panel); border:1px solid var(--border); border-radius:6px; min-height:36px; display:flex; align-items:center; gap:8px; }
+  #statusBar.loading { color:var(--accent); }
+  #statusBar.error   { color:var(--danger); border-color:var(--danger); }
+  #statusBar.ready   { color:var(--good);   border-color:var(--good); }
+
+  .camera-wrap { position:relative; width:100%; aspect-ratio:4/3; background:#000; border-radius:10px; overflow:hidden; border:1px solid var(--border); display:none; }
+  .camera-wrap.visible { display:block; }
+  #webcam-container { width:100%; height:100%; }
+  #webcam-container canvas, #webcam-container video { width:100% !important; height:100% !important; object-fit:cover; display:block; }
+
+  .hud-corner { position:absolute; width:20px; height:20px; border-color:var(--accent); border-style:solid; opacity:0.6; }
+  .hud-corner.tl { top:8px; left:8px;    border-width:2px 0 0 2px; }
+  .hud-corner.tr { top:8px; right:8px;   border-width:2px 2px 0 0; }
+  .hud-corner.bl { bottom:8px; left:8px;  border-width:0 0 2px 2px; }
+  .hud-corner.br { bottom:8px; right:8px; border-width:0 2px 2px 0; }
+
+  .scan-line { position:absolute; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); opacity:0.4; animation:scan 3s linear infinite; }
+  @keyframes scan { from{top:0} to{top:100%} }
+
+  #result-panel { display:none; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px; gap:14px; flex-direction:column; }
+  #result-panel.visible { display:flex; }
+  .result-label-row { display:flex; align-items:center; justify-content:space-between; }
+  .result-tag { font-size:11px; letter-spacing:3px; color:var(--dim); text-transform:uppercase; }
+  #top-label { font-size:28px; font-weight:700; letter-spacing:2px; text-transform:uppercase; transition:color 0.3s; }
+  #confidence-badge { font-family:'Share Tech Mono',monospace; font-size:22px; }
+
+  .bar-row { display:flex; flex-direction:column; gap:8px; }
+  .bar-item { display:flex; align-items:center; gap:10px; }
+  .bar-name { width:110px; font-size:12px; letter-spacing:1px; color:var(--dim); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex-shrink:0; }
+  .bar-track { flex:1; height:6px; background:var(--border); border-radius:99px; overflow:hidden; }
+  .bar-fill  { height:100%; border-radius:99px; background:var(--accent); transition:width 0.2s ease; }
+  .bar-pct   { font-family:'Share Tech Mono',monospace; font-size:11px; color:var(--dim); width:38px; text-align:right; flex-shrink:0; }
+
+  #alert-badge { display:none; align-items:center; gap:8px; background:rgba(255,23,68,0.1); border:1px solid var(--danger); border-radius:6px; padding:10px 14px; color:var(--danger); font-size:13px; font-weight:700; letter-spacing:2px; text-transform:uppercase; animation:blink-border 1s infinite; }
+  #alert-badge.show { display:flex; }
+  @keyframes blink-border { 0%,100%{border-color:var(--danger)} 50%{border-color:transparent} }
+  .alert-dot { width:8px; height:8px; border-radius:50%; background:var(--danger); box-shadow:0 0 8px var(--danger); animation:pulse 0.8s infinite; flex-shrink:0; }
+
+  .btn-stop { border-color:var(--danger); color:var(--danger); }
+  .btn-stop:hover,.btn-stop:active { background:var(--danger); color:#fff; }
+  .control-row { display:flex; gap:10px; }
+  .control-row .btn { flex:1; }
+
+  /* ── Toast ── */
+  #ticket-toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--panel); border:1px solid var(--good); border-radius:8px; padding:10px 18px; color:var(--good); font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:1px; z-index:999; transition:transform 0.3s ease; white-space:nowrap; }
+  #ticket-toast.show { transform:translateX(-50%) translateY(0); }
+
+  /* ── Dashboard ── */
+  .dash-wrap { width:100%; max-width:560px; margin:0 auto; padding:16px; display:flex; flex-direction:column; gap:14px; }
+  .dash-header-row { display:flex; align-items:center; justify-content:space-between; }
+  .dash-title { font-family:'Orbitron',sans-serif; font-size:14px; letter-spacing:2px; color:var(--accent); }
+  .dash-count { font-family:'Share Tech Mono',monospace; font-size:11px; color:var(--dim); }
+  .btn-clear { border-color:var(--dim); color:var(--dim); font-size:11px; padding:6px 12px; }
+  .btn-clear:hover { border-color:var(--danger); color:var(--danger); background:transparent; }
+
+  /* ── Stats cards ── */
+  .stats-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .stat-card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; display:flex; flex-direction:column; gap:4px; }
+  .stat-card-val { font-family:'Orbitron',sans-serif; font-size:22px; font-weight:700; }
+  .stat-card-key { font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+
+  /* ── Empty state ── */
+  .empty-state { text-align:center; padding:50px 20px; color:var(--dim); font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:1px; line-height:2; }
+  .empty-icon { font-size:36px; margin-bottom:12px; opacity:0.4; }
+
+  /* ── Ticket card ── */
+  .ticket-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; overflow:visible; animation:slideIn 0.3s ease; margin-bottom:2px; }
+  @keyframes slideIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+  .ticket-card.pothole { border-left:3px solid var(--danger); }
+  .ticket-card.good    { border-left:3px solid var(--good); }
+  .ticket-card.other   { border-left:3px solid var(--warn); }
+
+  .ticket-top { display:flex; align-items:center; justify-content:space-between; padding:12px 14px 8px; }
+  .ticket-id  { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); letter-spacing:1px; }
+  .ticket-condition { padding:0 14px 8px; font-size:20px; font-weight:700; letter-spacing:2px; text-transform:uppercase; }
+  .ticket-meta { padding:0 14px 12px; display:flex; flex-direction:column; gap:4px; }
+  .ticket-meta-row { display:flex; align-items:flex-start; gap:8px; font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); }
+  .ticket-meta-row span:first-child { color:var(--accent); min-width:70px; flex-shrink:0; }
+  .ticket-snap { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; border-top:1px solid var(--border); opacity:0.85; border-radius:0 0 10px 10px; }
+  .new-pill { background:rgba(0,230,118,0.15); color:var(--good); border:1px solid var(--good); font-size:9px; letter-spacing:2px; padding:1px 6px; border-radius:4px; font-family:'Share Tech Mono',monospace; }
+
+  /* ── Status badges ── */
+  .ticket-status { font-size:10px; font-weight:700; letter-spacing:2px; padding:2px 8px; border-radius:4px; cursor:pointer; user-select:none; transition:all 0.2s; }
+  .ticket-status.open     { background:rgba(255,171,0,0.15);   color:var(--warn);   border:1px solid var(--warn); }
+  .ticket-status.review   { background:rgba(0,229,255,0.12);   color:var(--accent); border:1px solid var(--accent); }
+  .ticket-status.resolved { background:rgba(0,230,118,0.12);   color:var(--good);   border:1px solid var(--good); }
+  .ticket-status.rejected { background:rgba(100,100,100,0.15); color:var(--dim);    border:1px solid var(--dim); }
+
+  /* ── Status dropdown ── */
+  .status-menu { display:none; position:fixed; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; z-index:200; box-shadow:0 8px 24px rgba(0,0,0,0.6); min-width:170px; }
+  .status-menu.show { display:block; }
+  .status-menu-item { padding:11px 16px; font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; letter-spacing:1px; cursor:pointer; transition:background 0.15s; display:flex; align-items:center; gap:10px; }
+  .status-menu-item:hover { background:var(--border); }
+
+  footer { margin-top:auto; padding:20px; font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); letter-spacing:1px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="team-banner">
+  <div class="team-name">The Chanakyas</div>
+  <div class="team-line"></div>
+  <div class="team-tagline">Road Condition Detection System</div>
+</div>
+
+<div id="modeBanner"></div>
+
+<div id="syncStatus">
+  <div class="sync-dot" id="syncDot"></div>
+  <span id="syncText">Connecting to cloud…</span>
+</div>
+
+<div class="tab-bar">
+  <button class="tab-btn active" id="scanTabBtn" onclick="switchTab('scanner')">📡 Scanner</button>
+  <button class="tab-btn" id="dashTabBtn" onclick="switchTab('dashboard')">
+    🗂 Dashboard <span class="tab-badge" id="ticketBadge">0</span>
+  </button>
+</div>
+
+<!-- ══ SCANNER TAB ══ -->
+<div class="tab-page active" id="tab-scanner">
+  <div class="main">
+
+    <div style="display:none">
+      <input type="url" id="modelURL" value="https://teachablemachine.withgoogle.com/models/0OGLfbe5V/" />
+    </div>
+
+    <!-- RHI Widget -->
+    <div class="rhi-widget">
+      <div class="rhi-header">
+        <div class="rhi-label">🛣 Road Health Index</div>
+        <div class="rhi-status-tag" id="rhiTag" style="background:rgba(0,230,118,0.12);color:var(--good);border:1px solid var(--good);">HEALTHY</div>
+      </div>
+      <div class="rhi-score-row">
+        <div class="rhi-score" id="rhiScore" style="color:var(--good)">100</div>
+        <div class="rhi-max">/ 100</div>
+      </div>
+      <div class="rhi-track"><div class="rhi-fill" id="rhiFill" style="width:100%;background:var(--good)"></div></div>
+      <div class="rhi-meta">
+        <div class="rhi-stat"><div class="rhi-stat-val" id="rhiTotal">0</div><div class="rhi-stat-key">Total Tickets</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-val" id="rhiPotholes" style="color:var(--danger)">0</div><div class="rhi-stat-key">Potholes</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-val" id="rhiOpen" style="color:var(--warn)">0</div><div class="rhi-stat-key">Open</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-val" id="rhiResolved" style="color:var(--good)">0</div><div class="rhi-stat-key">Resolved</div></div>
+      </div>
+    </div>
+
+    <div id="statusBar">⬡ &nbsp;Ready — tap START to begin detection</div>
+
+    <div class="control-row">
+      <button class="btn" id="startBtn" onclick="init()">▶ Start</button>
+      <button class="btn btn-stop" id="stopBtn" onclick="stopDetection()" disabled>■ Stop</button>
+    </div>
+
+    <div class="camera-wrap" id="cameraWrap">
+      <div id="webcam-container"></div>
+      <div class="hud-corner tl"></div><div class="hud-corner tr"></div>
+      <div class="hud-corner bl"></div><div class="hud-corner br"></div>
+      <div class="scan-line"></div>
+    </div>
+
+    <div id="result-panel">
+      <div class="result-label-row">
+        <div>
+          <div class="result-tag">Detected Condition</div>
+          <div id="top-label">—</div>
+        </div>
+        <div id="confidence-badge" style="color:var(--accent)">—</div>
+      </div>
+      <div id="alert-badge">
+        <div class="alert-dot"></div>
+        ⚠ POTHOLE DETECTED — TICKET GENERATED
+      </div>
+      <div class="bar-row" id="label-bars"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ DASHBOARD TAB ══ -->
+<div class="tab-page" id="tab-dashboard">
+  <div class="dash-wrap">
+
+    <div class="dash-header-row">
+      <div class="dash-title">Ticket Dashboard</div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <span class="dash-count" id="dashCount">0 tickets</span>
+        <button class="btn btn-clear" onclick="clearTickets()">Clear All</button>
+      </div>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-card-val" id="statOpen" style="color:var(--warn)">0</div><div class="stat-card-key">Open</div></div>
+      <div class="stat-card"><div class="stat-card-val" id="statReview" style="color:var(--accent)">0</div><div class="stat-card-key">Under Review</div></div>
+      <div class="stat-card"><div class="stat-card-val" id="statResolved" style="color:var(--good)">0</div><div class="stat-card-key">Resolved</div></div>
+    </div>
+
+    <div id="ticket-list">
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        No tickets yet.<br>Start the scanner and point<br>at a pothole to generate one.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Status dropdown -->
+<div class="status-menu" id="statusMenu">
+  <div class="status-menu-item" onclick="applyStatus('open')">    <span style="color:var(--warn)">●</span>   Open         </div>
+  <div class="status-menu-item" onclick="applyStatus('review')">  <span style="color:var(--accent)">●</span> Under Review </div>
+  <div class="status-menu-item" onclick="applyStatus('resolved')"><span style="color:var(--good)">●</span>   Resolved     </div>
+  <div class="status-menu-item" onclick="applyStatus('rejected')"><span style="color:var(--dim)">●</span>    Rejected     </div>
+</div>
+
+<div id="ticket-toast">✔ Ticket synced</div>
+<footer>THE CHANAKYAS · ROAD CONDITION DETECTION SYSTEM</footer>
+
+<script>
+  window._tickets   = [];
+  window._activeTab = 'scanner';
+
+  // ── Device detection ──────────────────────────────────
+  const isMobile   = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+  const urlParams  = new URLSearchParams(window.location.search);
+  const forcedMode = urlParams.get('mode');
+
+  function initMode() {
+    const banner = document.getElementById('modeBanner');
+    if (forcedMode === 'scan') {
+      switchTab('scanner');
+      banner.style.display = 'block';
+      banner.textContent   = '📡 SCANNER MODE';
+      document.getElementById('dashTabBtn').style.display = 'none';
+    } else if (forcedMode === 'dashboard') {
+      switchTab('dashboard');
+      banner.style.display = 'block';
+      banner.textContent   = '🗂 DASHBOARD MODE';
+      document.getElementById('scanTabBtn').style.display = 'none';
+    } else if (!isMobile) {
+      switchTab('dashboard');
+      document.getElementById('scanTabBtn').style.display = 'none';
+    } else {
+      switchTab('scanner');
+      document.getElementById('dashTabBtn').style.display = 'none';
+    }
+  }
+
+  // ── Firebase sync ─────────────────────────────────────
+  const syncInterval = setInterval(() => {
+    if (window._dbReady) {
+      clearInterval(syncInterval);
+      document.getElementById('syncDot').classList.add('live');
+      document.getElementById('syncText').textContent = 'Live sync active — tickets synced across all devices';
+    }
+  }, 500);
+
+  // ── Tab switching ─────────────────────────────────────
+  function switchTab(tab) {
+    window._activeTab = tab;
+    document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('tab-' + tab).classList.add('active');
+    const btn = document.getElementById(tab === 'scanner' ? 'scanTabBtn' : 'dashTabBtn');
+    if (btn) btn.classList.add('active');
+    if (tab === 'dashboard') renderDashboard();
+  }
+
+  // ── RHI ───────────────────────────────────────────────
+  function updateRHI() {
+    const tickets  = window._tickets || [];
+    const total    = tickets.length;
+    const potholes = tickets.filter(t => isPothole(t.condition)).length;
+    const open     = tickets.filter(t => !t.status || t.status === 'open').length;
+    const resolved = tickets.filter(t => t.status === 'resolved').length;
+
+    let penalty = 0;
+    tickets.forEach(t => {
+      if (!isPothole(t.condition)) return;
+      const w = (parseFloat(t.confidence) || 85) / 100;
+      const s = t.status || 'open';
+      if      (s === 'open')     penalty += w * 12;
+      else if (s === 'review')   penalty += w * 8;
+      else if (s === 'resolved') penalty += w * 2;
+    });
+
+    const rhi = Math.max(0, Math.min(100, Math.round(100 - penalty)));
+
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    set('rhiScore', rhi); set('rhiTotal', total); set('rhiPotholes', potholes);
+    set('rhiOpen', open); set('rhiResolved', resolved);
+    set('statOpen', open);
+    set('statReview', tickets.filter(t => t.status === 'review').length);
+    set('statResolved', resolved);
+
+    const fill = document.getElementById('rhiFill');
+    if (fill) fill.style.width = rhi + '%';
+
+    let col, tagText, tagBg, tagBorder;
+    if      (rhi >= 80) { col='var(--good)';   tagText='HEALTHY';         tagBg='rgba(0,230,118,0.12)'; tagBorder='var(--good)'; }
+    else if (rhi >= 50) { col='var(--warn)';   tagText='NEEDS ATTENTION'; tagBg='rgba(255,171,0,0.12)'; tagBorder='var(--warn)'; }
+    else                { col='var(--danger)'; tagText='CRITICAL';         tagBg='rgba(255,23,68,0.12)'; tagBorder='var(--danger)'; }
+
+    const scoreEl = document.getElementById('rhiScore');
+    if (scoreEl) scoreEl.style.color = col;
+    if (fill)    fill.style.background = col;
+    const tag = document.getElementById('rhiTag');
+    if (tag) { tag.textContent=tagText; tag.style.color=col; tag.style.background=tagBg; tag.style.border=`1px solid ${tagBorder}`; }
+  }
+
+  // ── Badge ─────────────────────────────────────────────
+  function updateBadge() {
+    const count = (window._tickets || []).length;
+    const badge = document.getElementById('ticketBadge');
+    const el    = document.getElementById('dashCount');
+    count > 0 ? badge.classList.add('show') : badge.classList.remove('show');
+    badge.textContent = count;
+    if (el) el.textContent = count + ' ticket' + (count !== 1 ? 's' : '');
+  }
+
+  // ── Status workflow ───────────────────────────────────
+  let _menuTicketId = null;
+
+  function openStatusMenu(firestoreId, btnEl) {
+    _menuTicketId = firestoreId;
+    const menu = document.getElementById('statusMenu');
+    if (menu.classList.contains('show') && menu._for === firestoreId) { menu.classList.remove('show'); return; }
+    menu._for = firestoreId;
+    const rect = btnEl.getBoundingClientRect();
+    menu.style.top      = (rect.bottom + window.scrollY + 6) + 'px';
+    menu.style.left     = rect.left + 'px';
+    menu.style.position = 'absolute';
+    menu.classList.add('show');
+  }
+
+  async function applyStatus(newStatus) {
+    document.getElementById('statusMenu').classList.remove('show');
+    if (!_menuTicketId || !window._dbReady) return;
+    try {
+      await window._updateDoc(window._doc(window._db, 'tickets', _menuTicketId), {
+        status: newStatus, statusUpdatedAt: new Date().toLocaleString('en-IN')
+      });
+      const labels = { open:'OPEN', review:'UNDER REVIEW', resolved:'RESOLVED', rejected:'REJECTED' };
+      showToast('✔ Status → ' + (labels[newStatus] || newStatus));
+    } catch(e) { console.error(e); showToast('✖ Failed to update status'); }
+    _menuTicketId = null;
+  }
+
+  document.addEventListener('click', e => {
+    const menu = document.getElementById('statusMenu');
+    if (menu.classList.contains('show') && !menu.contains(e.target) && !e.target.closest('.ticket-status')) {
+      menu.classList.remove('show');
+    }
+  });
+
+  // ── Clear all ─────────────────────────────────────────
+  async function clearTickets() {
+    if (!window._dbReady) { alert('Cloud not connected yet.'); return; }
+    if (!confirm('Delete ALL tickets from cloud?\nThis will clear tickets on every device.')) return;
+    for (const t of (window._tickets || [])) {
+      try { await window._deleteDoc(window._doc(window._db, 'tickets', t.firestoreId)); }
+      catch(e) { console.error(e); }
+    }
+  }
+
+  // ── Render dashboard ──────────────────────────────────
+  function renderDashboard() {
+    const tickets = window._tickets || [];
+    const list    = document.getElementById('ticket-list');
+    updateBadge(); updateRHI();
+
+    if (tickets.length === 0) {
+      list.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div>No tickets yet.<br>Start the scanner and point<br>at a pothole to generate one.</div>`;
+      return;
+    }
+
+    const now = Date.now();
+    const statusLabels = { open:'OPEN', review:'UNDER REVIEW', resolved:'RESOLVED', rejected:'REJECTED' };
+
+    list.innerHTML = tickets.map(t => {
+      const typeClass  = isPothole(t.condition) ? 'pothole' : (t.condition||'').toLowerCase().includes('good') ? 'good' : 'other';
+      const labelColor = typeClass === 'pothole' ? 'var(--danger)' : typeClass === 'good' ? 'var(--good)' : 'var(--warn)';
+      const isNew      = t.createdAt && (now - t.createdAt) < 30000;
+      const status     = t.status || 'open';
+      const locText    = t.location
+        ? `<a href="https://maps.google.com/?q=${t.location}" target="_blank" style="color:var(--accent);text-decoration:none;">${t.location} ↗</a>`
+        : 'Unavailable';
+      return `
+        <div class="ticket-card ${typeClass}">
+          <div class="ticket-top">
+            <div class="ticket-id">${t.id||'—'}</div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              ${isNew ? '<span class="new-pill">● LIVE</span>' : ''}
+              <div class="ticket-status ${status}" onclick="openStatusMenu('${t.firestoreId}',this)">
+                ${statusLabels[status]||'OPEN'} ▾
+              </div>
+            </div>
+          </div>
+          <div class="ticket-condition" style="color:${labelColor}">${(t.condition||'').toUpperCase()}</div>
+          <div class="ticket-meta">
+            <div class="ticket-meta-row"><span>TIME</span><span>${t.timestamp||'—'}</span></div>
+            <div class="ticket-meta-row"><span>CONFIDENCE</span><span>${t.confidence||'—'}</span></div>
+            <div class="ticket-meta-row"><span>LOCATION</span><span>${locText}</span></div>
+            ${t.statusUpdatedAt?`<div class="ticket-meta-row"><span>UPDATED</span><span>${t.statusUpdatedAt}</span></div>`:''}
+          </div>
+          ${t.snapshot?`<img class="ticket-snap" src="${t.snapshot}" alt="snapshot" />`:''}
+        </div>`;
+    }).join('');
+  }
+
+  // ── Toast ─────────────────────────────────────────────
+  function showToast(msg) {
+    const t = document.getElementById('ticket-toast');
+    t.textContent = msg; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // ── Ticket generation ─────────────────────────────────
+  let lastTicketTime = 0;
+  const TICKET_COOLDOWN = 10000;
+
+  async function generateTicket(condition, confidence, location, snapshot) {
+    if (!window._dbReady) return;
+    const now = Date.now();
+    if (now - lastTicketTime < TICKET_COOLDOWN) return;
+    lastTicketTime = now;
+    const count  = (window._tickets || []).length + 1;
+    const ticket = {
+      id: 'TCK-' + String(count).padStart(4, '0'),
+      condition, confidence,
+      location:  location || null,
+      snapshot:  snapshot || null,
+      timestamp: new Date().toLocaleString('en-IN'),
+      createdAt: now,
+      status:    'open'
+    };
+    try {
+      await window._addDoc(window._ticketsCol, ticket);
+      showToast('✔ ' + ticket.id + ' synced to all devices');
+    } catch(e) { console.error(e); showToast('✖ Cloud sync failed'); }
+  }
+
+  // ── GPS ───────────────────────────────────────────────
+  let currentLocation = null;
+  function startGPS() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.watchPosition(
+      p => { currentLocation = p.coords.latitude.toFixed(6) + ', ' + p.coords.longitude.toFixed(6); },
+      () => { currentLocation = null; },
+      { enableHighAccuracy: true }
+    );
+  }
+
+  // ── Snapshot ──────────────────────────────────────────
+  function takeSnapshot() {
+    if (!webcam || !webcam.canvas) return null;
+    try {
+      const c = document.createElement('canvas');
+      c.width = webcam.canvas.width; c.height = webcam.canvas.height;
+      c.getContext('2d').drawImage(webcam.canvas, 0, 0);
+      return c.toDataURL('image/jpeg', 0.4);
+    } catch { return null; }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // CONFIRMATION COUNTER — runs silently in background
+  // No UI elements. No visible output. Pure logic only.
+  // ══════════════════════════════════════════════════════
+  const CONFIRM_NEEDED = 3;    // consecutive detections needed
+  const CONFIRM_WINDOW = 5000; // ms — reset if gap too long
+  let confirmCount     = 0;
+  let confirmFirstTime = 0;
+
+  function resetCounter() {
+    confirmCount     = 0;
+    confirmFirstTime = 0;
+  }
+
+  // ── Scanner ───────────────────────────────────────────
+  let model, webcam, maxPredictions, running = false, animFrame;
+  const POTHOLE_KEYWORDS = ['pothole','damaged','bad','crack','broken','hole','rough'];
+  function isPothole(label) { return POTHOLE_KEYWORDS.some(k => (label||'').toLowerCase().includes(k)); }
+
+  function setStatus(msg, type = '') {
+    const el = document.getElementById('statusBar');
+    if (!el) return;
+    el.className = type; el.innerHTML = msg;
+  }
+
+  async function init() {
+    const urlInput = document.getElementById('modelURL').value.trim();
+    if (!urlInput) { setStatus('⚠ &nbsp;Configuration error.', 'error'); return; }
+    const modelURL = urlInput.endsWith('/') ? urlInput : urlInput + '/';
+    document.getElementById('startBtn').disabled = true;
+    setStatus('⏳ &nbsp;Loading model…', 'loading');
+    try {
+      model = await tmImage.load(modelURL + 'model.json', modelURL + 'metadata.json');
+      maxPredictions = model.getTotalClasses();
+    } catch(e) {
+      setStatus('✖ &nbsp;Model load failed: ' + (e.message || 'Check internet'), 'error');
+      document.getElementById('startBtn').disabled = false; return;
+    }
+    setStatus('📷 &nbsp;Starting rear camera…', 'loading');
+    try {
+      webcam = new tmImage.Webcam(640, 480, false);
+      await webcam.setup({ facingMode: { ideal: 'environment' } });
+      await webcam.play();
+      const container = document.getElementById('webcam-container');
+      container.innerHTML = ''; container.appendChild(webcam.canvas);
+    } catch(e) {
+      setStatus('✖ &nbsp;Camera error: ' + (e.message || 'Allow camera permission'), 'error');
+      document.getElementById('startBtn').disabled = false; return;
+    }
+    startGPS(); buildBars(maxPredictions);
+    document.getElementById('cameraWrap').classList.add('visible');
+    document.getElementById('result-panel').classList.add('visible');
+    document.getElementById('stopBtn').disabled = false;
+    setStatus('✔ &nbsp;Running — point camera at the road', 'ready');
+    running = true; loop();
+  }
+
+  function buildBars(count) {
+    const container = document.getElementById('label-bars');
+    container.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      container.innerHTML += `
+        <div class="bar-item">
+          <div class="bar-name" id="bar-name-${i}">CLASS ${i}</div>
+          <div class="bar-track"><div class="bar-fill" id="bar-fill-${i}" style="width:0%"></div></div>
+          <div class="bar-pct" id="bar-pct-${i}">0%</div>
+        </div>`;
+    }
+  }
+
+  async function loop() { if (!running) return; webcam.update(); await predict(); animFrame = requestAnimationFrame(loop); }
+
+  async function predict() {
+    const predictions = await model.predict(webcam.canvas);
+    let top = predictions[0];
+    for (const p of predictions) { if (p.probability > top.probability) top = p; }
+
+    const THRESHOLD = 0.85;
+    const labelEl = document.getElementById('top-label');
+    const confEl  = document.getElementById('confidence-badge');
+
+    if (top.probability < THRESHOLD) {
+      labelEl.textContent = 'NO ROAD'; labelEl.style.color = 'var(--dim)';
+      confEl.textContent  = (top.probability * 100).toFixed(1) + '%'; confEl.style.color = 'var(--dim)';
+      document.getElementById('alert-badge').classList.remove('show');
+      resetCounter(); // silent reset
+      predictions.forEach((p, i) => {
+        const n = document.getElementById(`bar-name-${i}`);
+        const f = document.getElementById(`bar-fill-${i}`);
+        const c = document.getElementById(`bar-pct-${i}`);
+        if (!n) return;
+        n.textContent = p.className;
+        f.style.width = (p.probability*100).toFixed(1)+'%'; f.style.background = 'var(--dim)';
+        c.textContent = (p.probability*100).toFixed(1)+'%';
+      });
+      return;
+    }
+
+    labelEl.textContent = top.className.toUpperCase();
+    confEl.textContent  = (top.probability * 100).toFixed(1) + '%';
+
+    if (isPothole(top.className)) {
+      labelEl.style.color = 'var(--danger)'; confEl.style.color = 'var(--danger)';
+
+      // ── Silent background confirmation counter ────────
+      const now = Date.now();
+      if (confirmCount > 0 && (now - confirmFirstTime) > CONFIRM_WINDOW) resetCounter();
+      if (confirmCount === 0) confirmFirstTime = now;
+      confirmCount++;
+
+      if (confirmCount >= CONFIRM_NEEDED) {
+        // Confirmed — show alert and fire ticket
+        document.getElementById('alert-badge').classList.add('show');
+        generateTicket(top.className, (top.probability*100).toFixed(1)+'%', currentLocation, takeSnapshot());
+        resetCounter();
+      }
+      // If not yet confirmed, alert stays hidden — no UI indication at all
+
+    } else {
+      labelEl.style.color = 'var(--good)'; confEl.style.color = 'var(--accent)';
+      document.getElementById('alert-badge').classList.remove('show');
+      resetCounter(); // silent reset on non-pothole
+    }
+
+    predictions.forEach((p, i) => {
+      const n = document.getElementById(`bar-name-${i}`);
+      const f = document.getElementById(`bar-fill-${i}`);
+      const c = document.getElementById(`bar-pct-${i}`);
+      if (!n) return;
+      n.textContent = p.className;
+      const pct = (p.probability*100).toFixed(1);
+      f.style.width = pct+'%'; c.textContent = pct+'%';
+      f.style.background = isPothole(p.className) ? 'var(--danger)' : p.className === top.className ? 'var(--good)' : 'var(--accent)';
+    });
+  }
+
+  function stopDetection() {
+    running = false; cancelAnimationFrame(animFrame);
+    if (webcam) webcam.stop();
+    resetCounter();
+    document.getElementById('cameraWrap').classList.remove('visible');
+    document.getElementById('result-panel').classList.remove('visible');
+    document.getElementById('alert-badge').classList.remove('show');
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled  = true;
+    setStatus('⬡ &nbsp;Detection stopped. Tap START to run again.');
+  }
+
+  // ── Boot ──────────────────────────────────────────────
+  updateBadge();
+  updateRHI();
+  initMode();
+</script>
+</body>
+</html>
