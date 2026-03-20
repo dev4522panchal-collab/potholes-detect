@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>The Chanakyas — Road Scan</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<script type="module">
+  import { initializeApp }                      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, collection, addDoc,
+           onSnapshot, query, orderBy,
+           deleteDoc, updateDoc, doc }          from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey:            "AIzaSyD9i78SfjG23Lj9AJtnISZ--k1xZUhNi_g",
+    authDomain:        "chanakyas-road.firebaseapp.com",
+    projectId:         "chanakyas-road",
+    storageBucket:     "chanakyas-road.firebasestorage.app",
+    messagingSenderId: "950208319080",
+    appId:             "1:950208319080:web:06a5c518dcaab4640d75dd"
+  };
+
+  const app        = initializeApp(firebaseConfig);
+  const db         = getFirestore(app);
+  const ticketsCol = collection(db, 'tickets');
+
+  window._db         = db;
+  window._ticketsCol = ticketsCol;
+  window._addDoc     = addDoc;
+  window._deleteDoc  = deleteDoc;
+  window._updateDoc  = updateDoc;
+  window._doc        = doc;
+  window._dbReady    = true;
+
+  const q = query(ticketsCol, orderBy('createdAt', 'desc'));
+  onSnapshot(q, snapshot => {
+    const tickets = [];
+    snapshot.forEach(d => tickets.push({ firestoreId: d.id, ...d.data() }));
+    window._tickets = tickets;
+    updateRHI();
+    updateBadge();
+    if (window._activeTab === 'dashboard') renderDashboard();
+  });
+</script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@500;700&family=Share+Tech+Mono&display=swap');
+
+:root {
+  --bg:     #0a0c0f;
+  --panel:  #111318;
+  --border: #1e2530;
+  --accent: #00e5ff;
+  --danger: #ff1744;
+  --good:   #00e676;
+  --warn:   #ffab00;
+  --text:   #c8d8e8;
+  --dim:    #4a5568;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'Rajdhani', sans-serif;
+  min-height: 100vh; overflow-x: hidden;
+}
+
+/* ══════════════════════════════════════════
+   PHONE — SCANNER VIEW
+   Full screen camera, minimal UI
+══════════════════════════════════════════ */
+#scannerView {
+  display: none;
+  width: 100vw; height: 100vh;
+  position: relative; background: #000;
+  flex-direction: column;
+}
+
+/* Fullscreen webcam */
+#webcam-container {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+}
+#webcam-container canvas,
+#webcam-container video {
+  width: 100% !important; height: 100% !important;
+  object-fit: cover; display: block;
+}
+
+/* Scan line overlay */
+.scan-line {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.5; animation: scanAnim 3s linear infinite; pointer-events: none; z-index: 5;
+}
+@keyframes scanAnim { from { top: 0; } to { top: 100%; } }
+
+/* HUD corners */
+.hud-corner {
+  position: absolute; width: 28px; height: 28px;
+  border-color: rgba(0,229,255,0.7); border-style: solid; z-index: 5;
+}
+.hud-corner.tl { top:16px; left:16px;   border-width:3px 0 0 3px; }
+.hud-corner.tr { top:16px; right:16px;  border-width:3px 3px 0 0; }
+.hud-corner.bl { bottom:16px; left:16px;  border-width:0 0 3px 3px; }
+.hud-corner.br { bottom:16px; right:16px; border-width:0 3px 3px 0; }
+
+/* Top status bar — minimal */
+#scanTopBar {
+  position: absolute; top: 0; left: 0; right: 0;
+  padding: 14px 20px 12px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
+  display: flex; align-items: center; justify-content: space-between;
+  z-index: 10;
+}
+.scan-team-name {
+  font-family: 'Orbitron', sans-serif; font-size: 13px;
+  font-weight: 900; letter-spacing: 3px;
+  background: linear-gradient(90deg, #00e5ff, #fff, #00e5ff);
+  background-size: 200% auto;
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text; animation: shine 3s linear infinite;
+}
+@keyframes shine { from{background-position:0% center} to{background-position:200% center} }
+
+.scan-status-pill {
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; padding: 4px 12px; border-radius: 99px;
+  border: 1px solid var(--dim); color: var(--dim);
+  transition: all 0.3s;
+}
+.scan-status-pill.ready  { border-color: var(--good);   color: var(--good);   background: rgba(0,230,118,0.1); }
+.scan-status-pill.detect { border-color: var(--accent);  color: var(--accent); background: rgba(0,229,255,0.1); }
+
+/* Bottom start/stop — minimal floating button */
+#scanBottomBar {
+  position: absolute; bottom: 36px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 14px; z-index: 10;
+}
+
+.scan-fab {
+  width: 64px; height: 64px; border-radius: 50%;
+  border: 2px solid var(--accent); background: rgba(0,0,0,0.6);
+  color: var(--accent); font-size: 22px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all 0.2s;
+  backdrop-filter: blur(8px);
+}
+.scan-fab:active { transform: scale(0.92); }
+.scan-fab.stop   { border-color: var(--danger); color: var(--danger); }
+.scan-fab:disabled { opacity: 0.3; pointer-events: none; }
+
+/* Tiny syncing indicator bottom right */
+#scanSyncDot {
+  position: absolute; bottom: 16px; right: 16px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--dim); z-index: 10;
+  transition: background 0.3s;
+}
+#scanSyncDot.live { background: var(--good); box-shadow: 0 0 8px var(--good); animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* Loading overlay on scanner */
+#scanLoader {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 16px; z-index: 20;
+}
+.loader-ring {
+  width: 48px; height: 48px; border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loader-text {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; letter-spacing: 2px; color: var(--dim);
+}
+
+/* ══════════════════════════════════════════
+   LAPTOP — DASHBOARD VIEW
+══════════════════════════════════════════ */
+#dashboardView {
+  display: none;
+  flex-direction: column; align-items: center;
+  min-height: 100vh;
+}
+
+/* Scanline overlay for dashboard */
+#dashboardView::before {
+  content: ''; position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,229,255,0.012) 2px, rgba(0,229,255,0.012) 4px);
+  pointer-events: none; z-index: 0;
+}
+
+.team-banner {
+  width: 100%; padding: 20px 20px 16px;
+  background: linear-gradient(135deg, #0a0c0f 0%, #0d1117 60%, #0a1628 100%);
+  border-bottom: 1px solid rgba(0,229,255,0.15);
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  position: relative; overflow: hidden; z-index: 1;
+}
+.team-banner::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse 60% 80% at 50% 120%, rgba(0,229,255,0.07) 0%, transparent 70%);
+  pointer-events: none;
+}
+.team-name {
+  font-family: 'Orbitron', sans-serif; font-size: clamp(20px,5vw,30px);
+  font-weight: 900; letter-spacing: 4px; text-transform: uppercase;
+  background: linear-gradient(90deg, #00e5ff 0%, #fff 50%, #00e5ff 100%);
+  background-size: 200% auto; -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent; background-clip: text;
+  animation: shine 3s linear infinite; position: relative; z-index: 1;
+}
+.team-tagline {
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  letter-spacing: 3px; color: var(--dim); text-transform: uppercase; z-index: 1;
+}
+.team-line { width: 60px; height: 1px; background: linear-gradient(90deg,transparent,var(--accent),transparent); margin-top: 3px; }
+
+/* Sync bar */
+#syncBar {
+  width: 100%; padding: 5px 16px;
+  background: rgba(0,229,255,0.04); border-bottom: 1px solid var(--border);
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  letter-spacing: 1px; color: var(--dim);
+  display: flex; align-items: center; gap: 8px; z-index: 1;
+}
+.sync-dot { width:6px; height:6px; border-radius:50%; background:var(--dim); flex-shrink:0; transition:background 0.3s; }
+.sync-dot.live { background:var(--good); box-shadow:0 0 6px var(--good); animation:pulse 2s infinite; }
+
+/* Dashboard content wrapper */
+.dash-wrap {
+  width: 100%; max-width: 600px; padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+  position: relative; z-index: 1;
+}
+
+/* ── RHI Card ── */
+.rhi-card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 18px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.rhi-header { display:flex; align-items:center; justify-content:space-between; }
+.rhi-label  { font-family:'Orbitron',sans-serif; font-size:11px; letter-spacing:2px; color:var(--accent); }
+.rhi-tag    { font-size:10px; font-weight:700; letter-spacing:2px; padding:3px 10px; border-radius:4px; }
+.rhi-main   { display:flex; align-items:flex-end; gap:6px; }
+.rhi-score  { font-family:'Orbitron',sans-serif; font-size:48px; font-weight:900; line-height:1; transition:color 0.5s; }
+.rhi-of     { font-family:'Share Tech Mono',monospace; font-size:14px; color:var(--dim); padding-bottom:8px; }
+.rhi-track  { height:8px; background:var(--border); border-radius:99px; overflow:hidden; }
+.rhi-fill   { height:100%; border-radius:99px; transition:width 0.8s cubic-bezier(0.4,0,0.2,1), background 0.5s; }
+.rhi-stats  { display:flex; gap:20px; flex-wrap:wrap; }
+.rhi-stat   { display:flex; flex-direction:column; gap:2px; }
+.rhi-stat-v { font-family:'Share Tech Mono',monospace; font-size:17px; }
+.rhi-stat-k { font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+
+/* ── Stats row ── */
+.stats-row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.stat-card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; }
+.stat-v    { font-family:'Orbitron',sans-serif; font-size:22px; font-weight:700; }
+.stat-k    { font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-top:3px; }
+
+/* ── Dashboard header ── */
+.dash-header-row { display:flex; align-items:center; justify-content:space-between; }
+.dash-title { font-family:'Orbitron',sans-serif; font-size:13px; letter-spacing:2px; color:var(--accent); }
+.dash-count { font-family:'Share Tech Mono',monospace; font-size:11px; color:var(--dim); }
+
+/* ── Buttons ── */
+.btn {
+  background:transparent; border:1px solid var(--accent); color:var(--accent);
+  font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700;
+  letter-spacing:2px; padding:8px 16px; border-radius:6px; cursor:pointer;
+  text-transform:uppercase; transition:all 0.2s; white-space:nowrap;
+}
+.btn:hover,.btn:active { background:var(--accent); color:var(--bg); }
+.btn-clear { border-color:var(--dim); color:var(--dim); font-size:11px; padding:6px 12px; }
+.btn-clear:hover { border-color:var(--danger); color:var(--danger); background:transparent; }
+
+/* ── Empty state ── */
+.empty-state {
+  text-align:center; padding:50px 20px; color:var(--dim);
+  font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:1px; line-height:2;
+}
+.empty-icon { font-size:36px; margin-bottom:12px; opacity:0.4; }
+
+/* ── Ticket card ── */
+.ticket-card {
+  background:var(--panel); border:1px solid var(--border);
+  border-radius:10px; overflow:visible; animation:slideIn 0.3s ease; margin-bottom:2px;
+}
+@keyframes slideIn { from{opacity:0;transform:translateY(-10px)} to{opacity:1;transform:translateY(0)} }
+.ticket-card.pothole { border-left:3px solid var(--danger); }
+.ticket-card.good    { border-left:3px solid var(--good); }
+.ticket-card.other   { border-left:3px solid var(--warn); }
+
+.ticket-top { display:flex; align-items:center; justify-content:space-between; padding:12px 14px 8px; }
+.ticket-id  { font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); letter-spacing:1px; }
+.ticket-condition { padding:0 14px 8px; font-size:20px; font-weight:700; letter-spacing:2px; text-transform:uppercase; }
+.ticket-meta { padding:0 14px 12px; display:flex; flex-direction:column; gap:4px; }
+.ticket-meta-row { display:flex; align-items:flex-start; gap:8px; font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); }
+.ticket-meta-row span:first-child { color:var(--accent); min-width:70px; flex-shrink:0; }
+.ticket-snap { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; border-top:1px solid var(--border); opacity:0.85; border-radius:0 0 10px 10px; }
+.new-pill { background:rgba(0,230,118,0.15); color:var(--good); border:1px solid var(--good); font-size:9px; letter-spacing:2px; padding:1px 6px; border-radius:4px; font-family:'Share Tech Mono',monospace; }
+
+/* ── Status badge ── */
+.ticket-status { font-size:10px; font-weight:700; letter-spacing:2px; padding:2px 8px; border-radius:4px; cursor:pointer; user-select:none; transition:all 0.2s; }
+.ticket-status.open     { background:rgba(255,171,0,0.15);   color:var(--warn);   border:1px solid var(--warn); }
+.ticket-status.review   { background:rgba(0,229,255,0.12);   color:var(--accent); border:1px solid var(--accent); }
+.ticket-status.resolved { background:rgba(0,230,118,0.12);   color:var(--good);   border:1px solid var(--good); }
+.ticket-status.rejected { background:rgba(100,100,100,0.15); color:var(--dim);    border:1px solid var(--dim); }
+
+/* ── Status dropdown ── */
+.status-menu { display:none; position:fixed; background:var(--panel); border:1px solid var(--border); border-radius:8px; overflow:hidden; z-index:200; box-shadow:0 8px 24px rgba(0,0,0,0.6); min-width:170px; }
+.status-menu.show { display:block; }
+.status-menu-item { padding:11px 16px; font-family:'Rajdhani',sans-serif; font-size:13px; font-weight:700; letter-spacing:1px; cursor:pointer; transition:background 0.15s; display:flex; align-items:center; gap:10px; }
+.status-menu-item:hover { background:var(--border); }
+
+/* Toast */
+#ticket-toast {
+  position:fixed; bottom:24px; left:50%;
+  transform:translateX(-50%) translateY(80px);
+  background:var(--panel); border:1px solid var(--good); border-radius:8px;
+  padding:10px 18px; color:var(--good);
+  font-family:'Share Tech Mono',monospace; font-size:12px; letter-spacing:1px;
+  z-index:999; transition:transform 0.3s ease; white-space:nowrap;
+}
+#ticket-toast.show { transform:translateX(-50%) translateY(0); }
+
+footer { padding:20px; font-family:'Share Tech Mono',monospace; font-size:10px; color:var(--dim); letter-spacing:1px; text-align:center; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════
+     PHONE — SCANNER VIEW (fullscreen)
+════════════════════════════════════════ -->
+<div id="scannerView">
+
+  <!-- Fullscreen camera -->
+  <div id="webcam-container"></div>
+  <div class="scan-line"></div>
+  <div class="hud-corner tl"></div>
+  <div class="hud-corner tr"></div>
+  <div class="hud-corner bl"></div>
+  <div class="hud-corner br"></div>
+
+  <!-- Minimal top bar -->
+  <div id="scanTopBar">
+    <div class="scan-team-name">THE CHANAKYAS</div>
+    <div class="scan-status-pill" id="scanPill">READY</div>
+  </div>
+
+  <!-- Floating start/stop buttons -->
+  <div id="scanBottomBar">
+    <button class="scan-fab" id="startBtn" onclick="init()" title="Start">▶</button>
+    <button class="scan-fab stop" id="stopBtn" onclick="stopDetection()" disabled title="Stop">■</button>
+  </div>
+
+  <!-- Tiny sync dot -->
+  <div id="scanSyncDot"></div>
+
+  <!-- Loading overlay -->
+  <div id="scanLoader">
+    <div class="loader-ring"></div>
+    <div class="loader-text" id="loaderText">INITIALISING…</div>
+  </div>
+
+  <!-- Hidden model URL -->
+  <input type="url" id="modelURL" value="https://teachablemachine.withgoogle.com/models/0OGLfbe5V/" style="display:none" />
+</div>
+
+<!-- ════════════════════════════════════════
+     LAPTOP — DASHBOARD VIEW
+════════════════════════════════════════ -->
+<div id="dashboardView">
+
+  <div class="team-banner">
+    <div class="team-name">The Chanakyas</div>
+    <div class="team-line"></div>
+    <div class="team-tagline">Road Condition Detection System</div>
+  </div>
+
+  <div id="syncBar">
+    <div class="sync-dot" id="syncDot"></div>
+    <span id="syncText">Connecting to cloud…</span>
+  </div>
+
+  <div class="dash-wrap">
+
+    <!-- RHI Card -->
+    <div class="rhi-card">
+      <div class="rhi-header">
+        <div class="rhi-label">🛣 Road Health Index</div>
+        <div class="rhi-tag" id="rhiTag" style="background:rgba(0,230,118,0.12);color:var(--good);border:1px solid var(--good);">HEALTHY</div>
+      </div>
+      <div class="rhi-main">
+        <div class="rhi-score" id="rhiScore" style="color:var(--good)">100</div>
+        <div class="rhi-of">/ 100</div>
+      </div>
+      <div class="rhi-track"><div class="rhi-fill" id="rhiFill" style="width:100%;background:var(--good)"></div></div>
+      <div class="rhi-stats">
+        <div class="rhi-stat"><div class="rhi-stat-v" id="rhiTotal">0</div><div class="rhi-stat-k">Total Tickets</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-v" id="rhiPotholes" style="color:var(--danger)">0</div><div class="rhi-stat-k">Potholes</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-v" id="rhiOpen" style="color:var(--warn)">0</div><div class="rhi-stat-k">Open</div></div>
+        <div class="rhi-stat"><div class="rhi-stat-v" id="rhiResolved" style="color:var(--good)">0</div><div class="rhi-stat-k">Resolved</div></div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-v" id="statOpen" style="color:var(--warn)">0</div><div class="stat-k">Open</div></div>
+      <div class="stat-card"><div class="stat-v" id="statReview" style="color:var(--accent)">0</div><div class="stat-k">Under Review</div></div>
+      <div class="stat-card"><div class="stat-v" id="statResolved" style="color:var(--good)">0</div><div class="stat-k">Resolved</div></div>
+    </div>
+
+    <!-- Ticket list header -->
+    <div class="dash-header-row">
+      <div class="dash-title">Ticket Dashboard</div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <span class="dash-count" id="dashCount">0 tickets</span>
+        <button class="btn btn-clear" onclick="clearTickets()">Clear All</button>
+      </div>
+    </div>
+
+    <div id="ticket-list">
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        No tickets yet.<br>Open this page on your phone to start scanning.
+      </div>
+    </div>
+
+    <footer>THE CHANAKYAS · ROAD CONDITION DETECTION SYSTEM</footer>
+  </div>
+</div>
+
+<!-- Status dropdown -->
+<div class="status-menu" id="statusMenu">
+  <div class="status-menu-item" onclick="applyStatus('open')">    <span style="color:var(--warn)">●</span>   Open         </div>
+  <div class="status-menu-item" onclick="applyStatus('review')">  <span style="color:var(--accent)">●</span> Under Review </div>
+  <div class="status-menu-item" onclick="applyStatus('resolved')"><span style="color:var(--good)">●</span>   Resolved     </div>
+  <div class="status-menu-item" onclick="applyStatus('rejected')"><span style="color:var(--dim)">●</span>    Rejected     </div>
+</div>
+
+<div id="ticket-toast">✔ Ticket synced</div>
+
+<script>
+// ══════════════════════════════════════════
+// DEVICE DETECTION & VIEW INIT
+// ══════════════════════════════════════════
+window._tickets   = [];
+window._activeTab = 'dashboard';
+
+const isMobile   = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 900;
+const urlParams  = new URLSearchParams(window.location.search);
+const forcedMode = urlParams.get('mode');
+const isScanner  = forcedMode === 'scan'      || (!forcedMode && isMobile);
+const isDash     = forcedMode === 'dashboard' || (!forcedMode && !isMobile);
+
+function initView() {
+  if (isScanner) {
+    document.getElementById('scannerView').style.display  = 'flex';
+    document.getElementById('dashboardView').style.display = 'none';
+    window._activeTab = 'scanner';
+    // Hide loader initially (show on start)
+    document.getElementById('scanLoader').style.display = 'none';
+  } else {
+    document.getElementById('scannerView').style.display  = 'none';
+    document.getElementById('dashboardView').style.display = 'flex';
+    window._activeTab = 'dashboard';
+  }
+}
+
+// ══════════════════════════════════════════
+// FIREBASE SYNC STATUS
+// ══════════════════════════════════════════
+const syncInterval = setInterval(() => {
+  if (window._dbReady) {
+    clearInterval(syncInterval);
+    // Dashboard sync dot
+    const dot  = document.getElementById('syncDot');
+    const text = document.getElementById('syncText');
+    if (dot)  dot.classList.add('live');
+    if (text) text.textContent = 'Live sync active — tickets synced across all devices instantly';
+    // Scanner sync dot
+    const sdot = document.getElementById('scanSyncDot');
+    if (sdot) sdot.classList.add('live');
+  }
+}, 500);
+
+// ══════════════════════════════════════════
+// RHI — Road Health Index
+// ══════════════════════════════════════════
+function updateRHI() {
+  const tickets  = window._tickets || [];
+  const total    = tickets.length;
+  const potholes = tickets.filter(t => isPothole(t.condition)).length;
+  const open     = tickets.filter(t => !t.status || t.status === 'open').length;
+  const resolved = tickets.filter(t => t.status === 'resolved').length;
+
+  let penalty = 0;
+  tickets.forEach(t => {
+    if (!isPothole(t.condition)) return;
+    const conf = parseFloat(t.confidence) || 85;
+    const w    = conf / 100;
+    const s    = t.status || 'open';
+    if      (s === 'open')     penalty += w * 12;
+    else if (s === 'review')   penalty += w * 8;
+    else if (s === 'resolved') penalty += w * 2;
+  });
+
+  const rhi = Math.max(0, Math.min(100, Math.round(100 - penalty)));
+
+  const setEl = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  setEl('rhiScore',    rhi);
+  setEl('rhiTotal',    total);
+  setEl('rhiPotholes', potholes);
+  setEl('rhiOpen',     open);
+  setEl('rhiResolved', resolved);
+  setEl('statOpen',    open);
+  setEl('statReview',  tickets.filter(t => t.status === 'review').length);
+  setEl('statResolved',resolved);
+
+  const fill = document.getElementById('rhiFill');
+  if (fill) fill.style.width = rhi + '%';
+
+  let col, tagText, tagBg, tagBorder;
+  if      (rhi >= 80) { col='var(--good)';   tagText='HEALTHY';         tagBg='rgba(0,230,118,0.12)'; tagBorder='var(--good)'; }
+  else if (rhi >= 50) { col='var(--warn)';   tagText='NEEDS ATTENTION'; tagBg='rgba(255,171,0,0.12)'; tagBorder='var(--warn)'; }
+  else                { col='var(--danger)'; tagText='CRITICAL';         tagBg='rgba(255,23,68,0.12)'; tagBorder='var(--danger)'; }
+
+  const scoreEl = document.getElementById('rhiScore');
+  if (scoreEl)  scoreEl.style.color = col;
+  if (fill)     fill.style.background = col;
+  const tag = document.getElementById('rhiTag');
+  if (tag) { tag.textContent=tagText; tag.style.color=col; tag.style.background=tagBg; tag.style.border=`1px solid ${tagBorder}`; }
+}
+
+// ══════════════════════════════════════════
+// BADGE & COUNT
+// ══════════════════════════════════════════
+function updateBadge() {
+  const count   = (window._tickets || []).length;
+  const countEl = document.getElementById('dashCount');
+  if (countEl) countEl.textContent = count + ' ticket' + (count !== 1 ? 's' : '');
+}
+
+// ══════════════════════════════════════════
+// DASHBOARD RENDER
+// ══════════════════════════════════════════
+function renderDashboard() {
+  const tickets = window._tickets || [];
+  const list    = document.getElementById('ticket-list');
+  if (!list) return;
+  updateBadge(); updateRHI();
+
+  if (tickets.length === 0) {
+    list.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div>No tickets yet.<br>Open this page on your phone to start scanning.</div>`;
+    return;
+  }
+
+  const now = Date.now();
+  const statusLabels = { open:'OPEN', review:'UNDER REVIEW', resolved:'RESOLVED', rejected:'REJECTED' };
+
+  list.innerHTML = tickets.map(t => {
+    const typeClass  = isPothole(t.condition) ? 'pothole' : (t.condition||'').toLowerCase().includes('good') ? 'good' : 'other';
+    const labelColor = typeClass === 'pothole' ? 'var(--danger)' : typeClass === 'good' ? 'var(--good)' : 'var(--warn)';
+    const isNew      = t.createdAt && (now - t.createdAt) < 30000;
+    const status     = t.status || 'open';
+    const locText    = t.location
+      ? `<a href="https://maps.google.com/?q=${t.location}" target="_blank" style="color:var(--accent);text-decoration:none;">${t.location} ↗</a>`
+      : 'Unavailable';
+    return `
+      <div class="ticket-card ${typeClass}">
+        <div class="ticket-top">
+          <div class="ticket-id">${t.id||'—'}</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            ${isNew ? '<span class="new-pill">● LIVE</span>' : ''}
+            <div class="ticket-status ${status}" onclick="openStatusMenu('${t.firestoreId}',this)">
+              ${statusLabels[status]||'OPEN'} ▾
+            </div>
+          </div>
+        </div>
+        <div class="ticket-condition" style="color:${labelColor}">${(t.condition||'').toUpperCase()}</div>
+        <div class="ticket-meta">
+          <div class="ticket-meta-row"><span>TIME</span><span>${t.timestamp||'—'}</span></div>
+          <div class="ticket-meta-row"><span>CONFIDENCE</span><span>${t.confidence||'—'}</span></div>
+          <div class="ticket-meta-row"><span>LOCATION</span><span>${locText}</span></div>
+          ${t.statusUpdatedAt?`<div class="ticket-meta-row"><span>UPDATED</span><span>${t.statusUpdatedAt}</span></div>`:''}
+        </div>
+        ${t.snapshot?`<img class="ticket-snap" src="${t.snapshot}" alt="snapshot" />`:''}
+      </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════
+// STATUS WORKFLOW
+// ══════════════════════════════════════════
+let _menuTicketId = null;
+
+function openStatusMenu(firestoreId, btnEl) {
+  _menuTicketId = firestoreId;
+  const menu = document.getElementById('statusMenu');
+  if (menu.classList.contains('show') && menu._for === firestoreId) { menu.classList.remove('show'); return; }
+  menu._for = firestoreId;
+  const rect = btnEl.getBoundingClientRect();
+  menu.style.top  = (rect.bottom + window.scrollY + 6) + 'px';
+  menu.style.left = rect.left + 'px';
+  menu.style.position = 'absolute';
+  menu.classList.add('show');
+}
+
+async function applyStatus(newStatus) {
+  document.getElementById('statusMenu').classList.remove('show');
+  if (!_menuTicketId || !window._dbReady) return;
+  try {
+    await window._updateDoc(window._doc(window._db, 'tickets', _menuTicketId), {
+      status: newStatus, statusUpdatedAt: new Date().toLocaleString('en-IN')
+    });
+    const labels = { open:'OPEN', review:'UNDER REVIEW', resolved:'RESOLVED', rejected:'REJECTED' };
+    showToast('✔ Status → ' + (labels[newStatus] || newStatus));
+  } catch(e) { console.error(e); showToast('✖ Failed to update status'); }
+  _menuTicketId = null;
+}
+
+document.addEventListener('click', e => {
+  const menu = document.getElementById('statusMenu');
+  if (menu.classList.contains('show') && !menu.contains(e.target) && !e.target.closest('.ticket-status')) {
+    menu.classList.remove('show');
+  }
+});
+
+// ══════════════════════════════════════════
+// CLEAR ALL
+// ══════════════════════════════════════════
+async function clearTickets() {
+  if (!window._dbReady) { alert('Cloud not connected yet.'); return; }
+  if (!confirm('Delete ALL tickets?\nThis clears tickets on every device.')) return;
+  for (const t of (window._tickets || [])) {
+    try { await window._deleteDoc(window._doc(window._db, 'tickets', t.firestoreId)); }
+    catch(e) { console.error(e); }
+  }
+}
+
+// ══════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════
+function showToast(msg) {
+  const t = document.getElementById('ticket-toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ══════════════════════════════════════════
+// TICKET GENERATION
+// ══════════════════════════════════════════
+let lastTicketTime = 0;
+const TICKET_COOLDOWN = 10000;
+
+async function generateTicket(condition, confidence, location, snapshot) {
+  if (!window._dbReady) return;
+  const now = Date.now();
+  if (now - lastTicketTime < TICKET_COOLDOWN) return;
+  lastTicketTime = now;
+
+  const count  = (window._tickets || []).length + 1;
+  const ticket = {
+    id:        'TCK-' + String(count).padStart(4, '0'),
+    condition, confidence,
+    location:  location || null,
+    snapshot:  snapshot || null,
+    timestamp: new Date().toLocaleString('en-IN'),
+    createdAt: now,
+    status:    'open'
+  };
+  try {
+    await window._addDoc(window._ticketsCol, ticket);
+    // Subtle flash on scanner sync dot — user sees green blink
+    const sdot = document.getElementById('scanSyncDot');
+    if (sdot) { sdot.style.background='#fff'; setTimeout(()=>sdot.style.background='',300); }
+  } catch(e) { console.error(e); }
+}
+
+// ══════════════════════════════════════════
+// GPS
+// ══════════════════════════════════════════
+let currentLocation = null;
+function startGPS() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.watchPosition(
+    p => { currentLocation = p.coords.latitude.toFixed(6) + ', ' + p.coords.longitude.toFixed(6); },
+    () => { currentLocation = null; },
+    { enableHighAccuracy: true }
+  );
+}
+
+// ══════════════════════════════════════════
+// SNAPSHOT
+// ══════════════════════════════════════════
+function takeSnapshot() {
+  if (!webcam || !webcam.canvas) return null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = webcam.canvas.width; c.height = webcam.canvas.height;
+    c.getContext('2d').drawImage(webcam.canvas, 0, 0);
+    return c.toDataURL('image/jpeg', 0.4);
+  } catch { return null; }
+}
+
+// ══════════════════════════════════════════
+// CONFIRMATION COUNTER (silent, background)
+// ══════════════════════════════════════════
+const CONFIRM_NEEDED = 3;
+const CONFIRM_WINDOW = 5000; // ms
+let confirmCount     = 0;
+let confirmFirstTime = 0;
+
+function resetCounter() { confirmCount = 0; confirmFirstTime = 0; }
+
+// ══════════════════════════════════════════
+// SCANNER
+// ══════════════════════════════════════════
+let model, webcam, maxPredictions, running = false, animFrame;
+const POTHOLE_KEYWORDS = ['pothole','damaged','bad','crack','broken','hole','rough'];
+function isPothole(label) { return POTHOLE_KEYWORDS.some(k => (label||'').toLowerCase().includes(k)); }
+
+function setScanPill(text, cls) {
+  const pill = document.getElementById('scanPill');
+  if (!pill) return;
+  pill.textContent = text;
+  pill.className   = 'scan-status-pill ' + (cls || '');
+}
+
+function showLoader(text) {
+  const loader = document.getElementById('scanLoader');
+  const ltext  = document.getElementById('loaderText');
+  if (loader) loader.style.display = 'flex';
+  if (ltext)  ltext.textContent = text || 'LOADING…';
+}
+
+function hideLoader() {
+  const loader = document.getElementById('scanLoader');
+  if (loader) loader.style.display = 'none';
+}
+
+async function init() {
+  const urlInput = document.getElementById('modelURL').value.trim();
+  if (!urlInput) return;
+  const modelURL = urlInput.endsWith('/') ? urlInput : urlInput + '/';
+
+  document.getElementById('startBtn').disabled = true;
+  showLoader('LOADING MODEL…');
+  setScanPill('LOADING', '');
+
+  try {
+    model = await tmImage.load(modelURL + 'model.json', modelURL + 'metadata.json');
+    maxPredictions = model.getTotalClasses();
+  } catch(e) {
+    hideLoader(); setScanPill('ERROR', '');
+    document.getElementById('startBtn').disabled = false; return;
+  }
+
+  showLoader('STARTING CAMERA…');
+  try {
+    webcam = new tmImage.Webcam(640, 480, false);
+    await webcam.setup({ facingMode: { ideal: 'environment' } });
+    await webcam.play();
+    const container = document.getElementById('webcam-container');
+    container.innerHTML = ''; container.appendChild(webcam.canvas);
+  } catch(e) {
+    hideLoader(); setScanPill('CAM ERROR', '');
+    document.getElementById('startBtn').disabled = false; return;
+  }
+
+  startGPS();
+  hideLoader();
+  document.getElementById('stopBtn').disabled = false;
+  setScanPill('SCANNING', 'ready');
+  running = true; loop();
+}
+
+async function loop() {
+  if (!running) return;
+  webcam.update();
+  await predict();
+  animFrame = requestAnimationFrame(loop);
+}
+
+async function predict() {
+  const predictions = await model.predict(webcam.canvas);
+  let top = predictions[0];
+  for (const p of predictions) { if (p.probability > top.probability) top = p; }
+
+  const THRESHOLD = 0.85;
+
+  // Below threshold → not a road, reset counter silently
+  if (top.probability < THRESHOLD) {
+    resetCounter();
+    setScanPill('SCANNING', 'ready');
+    return;
+  }
+
+  // Non-pothole condition detected
+  if (!isPothole(top.className)) {
+    resetCounter();
+    setScanPill('SCANNING', 'ready');
+    return;
+  }
+
+  // ── Pothole detected — run confirmation counter silently ──
+  const now = Date.now();
+  if (confirmCount > 0 && (now - confirmFirstTime) > CONFIRM_WINDOW) resetCounter();
+  if (confirmCount === 0) confirmFirstTime = now;
+  confirmCount++;
+
+  // Show detecting pill on phone — no numbers, no details
+  setScanPill('DETECTING…', 'detect');
+
+  if (confirmCount >= CONFIRM_NEEDED) {
+    // ✅ Confirmed — fire ticket silently
+    generateTicket(top.className, (top.probability*100).toFixed(1)+'%', currentLocation, takeSnapshot());
+    resetCounter();
+    setScanPill('SCANNING', 'ready');
+  }
+}
+
+function stopDetection() {
+  running = false; cancelAnimationFrame(animFrame);
+  if (webcam) webcam.stop();
+  resetCounter();
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('stopBtn').disabled  = true;
+  setScanPill('STOPPED', '');
+}
+
+// ══════════════════════════════════════════
+// BOOT
+// ══════════════════════════════════════════
+updateRHI();
+updateBadge();
+initView();
+if (!isScanner) renderDashboard();
+</script>
+</body>
+</html>
